@@ -1,0 +1,233 @@
+"""
+ANALISIS WELL LOG - SUMUR TG-1
+Track: GR | Vsh Linear | Vsh Larionov(T) | Vsh Larionov(O) | Vsh Steiber | Vsh Clavier | Comparison
+"""
+
+import os, glob
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+from matplotlib.patches import Patch
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================
+# CARI FILE EXCEL OTOMATIS
+# ============================================================
+NAMA_FILE = "Well TG_TOPS_FIX_DIANA.xlsx"
+CARI_DI = [
+    os.path.join(os.path.expanduser("~"), "Downloads",  NAMA_FILE),
+    os.path.join(os.path.expanduser("~"), "Desktop",    NAMA_FILE),
+    os.path.join(os.path.expanduser("~"), "Documents",  NAMA_FILE),
+    os.path.join(os.path.expanduser("~"),               NAMA_FILE),
+    os.path.join(os.getcwd(),                           NAMA_FILE),
+]
+FILE_PATH = next((p for p in CARI_DI if os.path.exists(p)), None)
+if FILE_PATH is None:
+    found = glob.glob(os.path.join("C:\\", "**", NAMA_FILE), recursive=True)
+    FILE_PATH = found[0] if found else None
+if FILE_PATH is None:
+    raise FileNotFoundError(
+        f"\n❌ File '{NAMA_FILE}' tidak ditemukan!\n"
+        f"   Pastikan file ada di folder Downloads, Desktop, atau Documents.\n"
+    )
+print(f"✅ File ditemukan : {FILE_PATH}")
+
+# ============================================================
+# BACA DATA EXCEL
+# ============================================================
+df_main = pd.read_excel(FILE_PATH, sheet_name='Well Zone Marker', header=None)
+print(f"✅ Data berhasil dibaca")
+
+# ============================================================
+# PARAMETER ZONA
+# ============================================================
+ZONA_ORDER = ['SS-D', 'SS-C', 'SS-B', 'LS-A', 'SS-A']
+
+tg1_zone_markers = {
+    'SS-D': {'Top': 147.5, 'Bottom': 227.0},
+    'SS-C': {'Top': 227.0, 'Bottom': 384.5},
+    'SS-B': {'Top': 384.5, 'Bottom': 527.5},
+    'LS-A': {'Top': 527.5, 'Bottom': 561.0},
+    'SS-A': {'Top': 561.0, 'Bottom': 691.5},
+}
+tg1_gr_params = {
+    'SS-D': {'GRmax': 139.1342, 'GRmin': 51.1318},
+    'SS-C': {'GRmax': 176.2512, 'GRmin': 65.4753},
+    'SS-B': {'GRmax': 171.4118, 'GRmin': 47.3294},
+    'LS-A': {'GRmax': 180.4958, 'GRmin': 48.8002},
+    'SS-A': {'GRmax': 182.2701, 'GRmin': 40.3661},
+}
+tg1_zone_config = {
+    'SS-D': 7, 'SS-C': 23, 'SS-B': 39, 'LS-A': 55, 'SS-A': 71,
+}
+WARNA_ZONA = {
+    'SS-D': '#1565C0',
+    'SS-C': '#2E7D32',
+    'SS-B': '#E65100',
+    'LS-A': '#6A1B9A',
+    'SS-A': '#B71C1C',
+}
+
+# ============================================================
+# EKSTRAK DATA & HITUNG VSH
+# ============================================================
+records = []
+for zona, cs in tg1_zone_config.items():
+    for r in range(1, df_main.shape[0]):
+        if pd.isna(df_main.iloc[r, cs]):
+            break
+        records.append({
+            'Zone'  : zona,
+            'DEPTH' : float(df_main.iloc[r, cs+2]),
+            'GR'    : float(df_main.iloc[r, cs+3]),
+            'GRmax' : tg1_gr_params[zona]['GRmax'],
+            'GRmin' : tg1_gr_params[zona]['GRmin'],
+        })
+
+df = pd.DataFrame(records).sort_values('DEPTH').reset_index(drop=True)
+
+# Hitung Vsh - 5 Metode
+df['Vsh_Linear']        = ((df['GR'] - df['GRmin']) / (df['GRmax'] - df['GRmin'])).clip(0, 1)
+df['Vsh_Larionov_Old']  = 0.33  * (2 ** (2.0 * df['Vsh_Linear']) - 1)
+df['Vsh_Larionov_Tert'] = 0.083 * (2 ** (3.7  * df['Vsh_Linear']) - 1)
+df['Vsh_Steiber']       = df['Vsh_Linear'] / (3 - 2 * df['Vsh_Linear'])
+df['Vsh_Clavier']       = 1.7 - np.sqrt(3.38 - (df['Vsh_Linear'] + 0.7)**2)
+
+print(f"✅ Perhitungan Vsh selesai | Total: {len(df)} titik data")
+
+# ============================================================
+# TABEL RATA-RATA VSH
+# ============================================================
+print("\n" + "="*78)
+print("  RATA-RATA Vsh PER ZONA - SUMUR TG-1")
+print("="*78)
+print(f"  {'Zona':<7} {'n':>5} {'GRmax':>9} {'GRmin':>9} "
+      f"{'Lin':>9} {'Lar(T)':>9} {'Lar(O)':>9} {'Steiber':>9} {'Clavier':>9}")
+print("  " + "-"*74)
+for zona in ZONA_ORDER:
+    g = df[df['Zone'] == zona]
+    print(f"  {zona:<7} {len(g):>5} "
+          f"{tg1_gr_params[zona]['GRmax']:>9.4f} "
+          f"{tg1_gr_params[zona]['GRmin']:>9.4f} "
+          f"{g['Vsh_Linear'].mean():>9.4f} "
+          f"{g['Vsh_Larionov_Tert'].mean():>9.4f} "
+          f"{g['Vsh_Larionov_Old'].mean():>9.4f} "
+          f"{g['Vsh_Steiber'].mean():>9.4f} "
+          f"{g['Vsh_Clavier'].mean():>9.4f}")
+print("="*78)
+
+# ============================================================
+# GRAFIK WELL LOG - 7 TRACK
+# GR | Linear | Larionov(T) | Larionov(O) | Steiber | Clavier | Comparison
+# ============================================================
+depth      = df['DEPTH'].values
+GR         = df['GR'].values
+vsh_lin    = df['Vsh_Linear'].values
+vsh_lart   = df['Vsh_Larionov_Tert'].values
+vsh_laro   = df['Vsh_Larionov_Old'].values
+vsh_stei   = df['Vsh_Steiber'].values
+vsh_clav   = df['Vsh_Clavier'].values
+
+depth_min  = depth.min()
+depth_max  = depth.max()
+
+fig, axes = plt.subplots(1, 7, figsize=(22, 14),
+                         gridspec_kw={'wspace': 0.06})
+fig.patch.set_facecolor('white')
+
+def add_zone_lines(ax, xlim_right):
+    for zona in ZONA_ORDER:
+        top    = tg1_zone_markers[zona]['Top']
+        bottom = tg1_zone_markers[zona]['Bottom']
+        ax.axhline(top,    color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+        ax.axhline(bottom, color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+        mid = (top + bottom) / 2
+        ax.text(xlim_right * 0.97, mid, zona,
+                ha='right', va='center', fontsize=6,
+                color=WARNA_ZONA[zona], fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.1', fc='white', alpha=0.6, ec='none'))
+
+# ---- Konfigurasi 6 track pertama ----
+track_cfg = [
+    {'data': GR,       'title': 'GR\n(API)',              'unit': 'API',      'xlim': (0, 200), 'color': '#2E7D32'},
+    {'data': vsh_lin,  'title': 'Vsh Linear\n(fraction)', 'unit': 'fraction', 'xlim': (0, 1),   'color': '#1565C0'},
+    {'data': vsh_lart, 'title': 'Vsh Larionov\n(T)',      'unit': 'fraction', 'xlim': (0, 1),   'color': '#6A1B9A'},
+    {'data': vsh_laro, 'title': 'Vsh Larionov\n(O)',      'unit': 'fraction', 'xlim': (0, 1),   'color': '#E65100'},
+    {'data': vsh_stei, 'title': 'Vsh Steiber\n(fraction)','unit': 'fraction', 'xlim': (0, 1),   'color': '#B71C1C'},
+    {'data': vsh_clav, 'title': 'Vsh Clavier\n(fraction)','unit': 'fraction', 'xlim': (0, 1),   'color': '#00695C'},
+]
+
+for i, (ax, cfg) in enumerate(zip(axes[:6], track_cfg)):
+    data  = cfg['data']
+    clr   = cfg['color']
+    xlim  = cfg['xlim']
+
+    ax.plot(data, depth, color=clr, linewidth=0.9)
+    ax.fill_betweenx(depth, xlim[0], data, alpha=0.22, color=clr)
+
+    # Garis Vsh = 0.5 untuk track Vsh
+    if i > 0:
+        ax.axvline(0.5, color='black', linewidth=0.8, linestyle='--', alpha=0.45)
+
+    ax.set_xlim(xlim)
+    ax.set_ylim(depth_max + 5, depth_min - 5)
+    ax.set_title(cfg['title'], fontsize=9, fontweight='bold', pad=5, color=clr)
+    ax.set_xlabel(cfg['unit'], fontsize=7)
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.tick_params(axis='x', labelsize=6.5)
+    ax.grid(True, linestyle='--', alpha=0.3, color='gray')
+
+    if i == 0:
+        ax.set_ylabel('Kedalaman (m)', fontsize=10, fontweight='bold')
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(50))
+        ax.tick_params(axis='y', labelsize=8)
+    else:
+        ax.set_yticklabels([])
+
+    add_zone_lines(ax, xlim[1])
+
+# ---- TRACK 7: COMPARISON ----
+ax_comp = axes[6]
+comp_lines = [
+    (vsh_lin,  'Linear',   '#1565C0', '-',              1.6),
+    (vsh_lart, 'Lar.(T)',  '#6A1B9A', '--',             1.1),
+    (vsh_laro, 'Lar.(O)',  '#E65100', ':',              1.1),
+    (vsh_stei, 'Steiber',  '#B71C1C', '-.',             1.1),
+    (vsh_clav, 'Clavier',  '#00695C', (0,(3,1,1,1)),   1.1),
+]
+for data, lbl, clr, ls, lw in comp_lines:
+    ax_comp.plot(data, depth, color=clr, linewidth=lw,
+                 linestyle=ls, label=lbl, alpha=0.9)
+
+ax_comp.axvline(0.5, color='black', linewidth=0.9, linestyle='--',
+                alpha=0.55, label='Vsh=0.5')
+ax_comp.set_xlim(0, 1)
+ax_comp.set_ylim(depth_max + 5, depth_min - 5)
+ax_comp.set_title('Comparison\n(All Vsh)', fontsize=9,
+                   fontweight='bold', pad=5, color='black')
+ax_comp.set_xlabel('fraction', fontsize=7)
+ax_comp.set_yticklabels([])
+ax_comp.xaxis.set_major_locator(ticker.MaxNLocator(4))
+ax_comp.tick_params(axis='x', labelsize=6.5)
+ax_comp.grid(True, linestyle='--', alpha=0.3, color='gray')
+ax_comp.legend(fontsize=7, loc='lower right', framealpha=0.9,
+               bbox_to_anchor=(1.0, 0.0))
+add_zone_lines(ax_comp, 1.0)
+
+# ---- JUDUL UTAMA ----
+fig.suptitle('WELL LOG ANALYSIS - SUMUR TG-1\nVolume Shale (Vsh) per Metode',
+             fontsize=14, fontweight='bold', y=0.99)
+
+# ---- LEGENDA ZONA ----
+legend_patches = [Patch(color=WARNA_ZONA[z], label=z) for z in ZONA_ORDER]
+fig.legend(handles=legend_patches, loc='lower center', ncol=5,
+           fontsize=9, title='Zona', title_fontsize=9,
+           bbox_to_anchor=(0.5, 0.00), framealpha=0.9, edgecolor='gray')
+
+plt.savefig('well_log_vsh_TG1.png', dpi=200, bbox_inches='tight', facecolor='white')
+plt.show()
+
+print("\n✅ Grafik tersimpan : well_log_vsh_TG1.png")
+print("✅ SELESAI!")
