@@ -1,0 +1,372 @@
+"""
+=============================================================================
+ANALISIS DATA WELL LOG - PERHITUNGAN VOLUME SHALE (Vsh)
+Sumur TG-1 dan TG-2 | Mata Kuliah Analisis Data Well Log
+=============================================================================
+"""
+
+import os, glob
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================
+# BAGIAN 1: CARI FILE EXCEL OTOMATIS
+# ============================================================
+NAMA_FILE = "Well TG_TOPS_FIX_DIANA.xlsx"
+CARI_DI = [
+    os.path.join(os.path.expanduser("~"), "Downloads",  NAMA_FILE),
+    os.path.join(os.path.expanduser("~"), "Desktop",    NAMA_FILE),
+    os.path.join(os.path.expanduser("~"), "Documents",  NAMA_FILE),
+    os.path.join(os.path.expanduser("~"),               NAMA_FILE),
+    os.path.join(os.getcwd(),                           NAMA_FILE),
+]
+FILE_PATH = next((p for p in CARI_DI if os.path.exists(p)), None)
+if FILE_PATH is None:
+    found = glob.glob(r"C:\**\\" + NAMA_FILE, recursive=True)
+    FILE_PATH = found[0] if found else None
+if FILE_PATH is None:
+    raise FileNotFoundError(
+        f"\n❌ File '{NAMA_FILE}' tidak ditemukan!\n"
+        f"   Taruh file Excel di folder Downloads, Desktop, atau Documents, lalu run ulang.\n"
+    )
+print(f"✅ File ditemukan : {FILE_PATH}")
+
+# ============================================================
+# BAGIAN 2: BACA DATA EXCEL
+# ============================================================
+df_raw  = pd.read_excel(FILE_PATH, sheet_name='Well Zone Marker (2)', header=None)
+df_main = pd.read_excel(FILE_PATH, sheet_name='Well Zone Marker',    header=None)
+print(f"✅ Data berhasil dibaca")
+
+# ============================================================
+# BAGIAN 3: ZONA MARKER & PARAMETER GR
+# ============================================================
+ZONA_ORDER = ['SS-D', 'SS-C', 'SS-B', 'LS-A', 'SS-A']
+
+tg1_zone_markers = {
+    'SS-D': {'Top': 147.5, 'Bottom': 227.0},
+    'SS-C': {'Top': 227.0, 'Bottom': 384.5},
+    'SS-B': {'Top': 384.5, 'Bottom': 527.5},
+    'LS-A': {'Top': 527.5, 'Bottom': 561.0},
+    'SS-A': {'Top': 561.0, 'Bottom': 691.5},
+}
+tg2_zone_markers = {
+    'SS-D': {'Top': 202.0, 'Bottom': 319.5},
+    'SS-C': {'Top': 319.5, 'Bottom': 442.0},
+    'SS-B': {'Top': 442.0, 'Bottom': 579.5},
+    'LS-A': {'Top': 579.5, 'Bottom': 613.0},
+    'SS-A': {'Top': 613.0, 'Bottom': 747.5},
+}
+tg1_gr_params = {
+    'SS-D': {'GRmax': 139.1342, 'GRmin': 51.1318},
+    'SS-C': {'GRmax': 176.2512, 'GRmin': 65.4753},
+    'SS-B': {'GRmax': 171.4118, 'GRmin': 47.3294},
+    'LS-A': {'GRmax': 180.4958, 'GRmin': 48.8002},
+    'SS-A': {'GRmax': 182.2701, 'GRmin': 40.3661},
+}
+tg1_zone_config = {
+    'SS-D': {'col_start': 7},
+    'SS-C': {'col_start': 23},
+    'SS-B': {'col_start': 39},
+    'LS-A': {'col_start': 55},
+    'SS-A': {'col_start': 71},
+}
+WARNA_ZONA = {
+    'SS-D': '#2196F3',
+    'SS-C': '#4CAF50',
+    'SS-B': '#FF9800',
+    'LS-A': '#9C27B0',
+    'SS-A': '#F44336',
+}
+
+# ============================================================
+# BAGIAN 4: EKSTRAK DATA LOG TG-1
+# ============================================================
+records = []
+for zona, cfg in tg1_zone_config.items():
+    cs = cfg['col_start']
+    for r in range(1, df_main.shape[0]):
+        if pd.isna(df_main.iloc[r, cs]):
+            break
+        records.append({
+            'Well'  : 'TG-1',
+            'Zone'  : zona,
+            'DEPTH' : float(df_main.iloc[r, cs+2]),
+            'GR'    : float(df_main.iloc[r, cs+3]),
+            'ILD'   : float(df_main.iloc[r, cs+4]),
+            'NPHI'  : float(df_main.iloc[r, cs+5]),
+            'RHOB'  : float(df_main.iloc[r, cs+6]),
+            'GRmax' : tg1_gr_params[zona]['GRmax'],
+            'GRmin' : tg1_gr_params[zona]['GRmin'],
+        })
+
+df = pd.DataFrame(records)
+
+# ============================================================
+# BAGIAN 5: HITUNG VSH - 5 METODE
+# ============================================================
+df['Vsh_Linear']       = ((df['GR'] - df['GRmin']) / (df['GRmax'] - df['GRmin'])).clip(0, 1)
+df['Vsh_Larionov_Old'] = 0.33  * (2 ** (2.0 * df['Vsh_Linear']) - 1)
+df['Vsh_Larionov_Tert']= 0.083 * (2 ** (3.7 * df['Vsh_Linear']) - 1)
+df['Vsh_Steiber']      = df['Vsh_Linear'] / (3 - 2 * df['Vsh_Linear'])
+df['Vsh_Clavier']      = 1.7 - np.sqrt(3.38 - (df['Vsh_Linear'] + 0.7)**2)
+
+print(f"✅ Perhitungan Vsh selesai | Total data: {len(df)} titik")
+
+# ============================================================
+# BAGIAN 6: TABEL RATA-RATA Vsh PER ZONA
+# ============================================================
+print("\n" + "="*75)
+print("  RATA-RATA Vsh PER ZONA - SUMUR TG-1")
+print("="*75)
+print(f"  {'Zona':<7} {'n':>5} {'Vsh Linear':>12} {'Vsh Lar.Old':>13} {'Vsh Lar.Tert':>14} {'Vsh Steiber':>13} {'Vsh Clavier':>13}")
+print("  " + "-"*70)
+for zona in ZONA_ORDER:
+    g = df[df['Zone']==zona]
+    print(f"  {zona:<7} {len(g):>5} "
+          f"{g['Vsh_Linear'].mean():>12.4f} "
+          f"{g['Vsh_Larionov_Old'].mean():>13.4f} "
+          f"{g['Vsh_Larionov_Tert'].mean():>14.4f} "
+          f"{g['Vsh_Steiber'].mean():>13.4f} "
+          f"{g['Vsh_Clavier'].mean():>13.4f}")
+print("="*75)
+
+# ============================================================
+# BAGIAN 7: WELL LOG DISPLAY - FORMAT TRACK PROFESIONAL
+# ============================================================
+# Susun data berurutan berdasarkan kedalaman
+df_sorted = df.sort_values('DEPTH').reset_index(drop=True)
+
+fig = plt.figure(figsize=(18, 14))
+fig.patch.set_facecolor('white')
+
+# Buat 6 track: Litologi | GR | ILD | NPHI & RHOB | Vsh (5 metode) | Vsh bar
+gs = fig.add_gridspec(1, 6, wspace=0.08,
+                      left=0.06, right=0.97, top=0.91, bottom=0.04)
+
+ax_lito  = fig.add_subplot(gs[0])   # Track 1: Zona/Litologi
+ax_gr    = fig.add_subplot(gs[1])   # Track 2: GR
+ax_ild   = fig.add_subplot(gs[2])   # Track 3: ILD (Resistivity)
+ax_poro  = fig.add_subplot(gs[3])   # Track 4: NPHI & RHOB
+ax_vsh   = fig.add_subplot(gs[4])   # Track 5: Semua Vsh
+ax_vshb  = fig.add_subplot(gs[5])   # Track 6: Vsh Linear fill
+
+depth = df_sorted['DEPTH'].values
+GR    = df_sorted['GR'].values
+ILD   = df_sorted['ILD'].values
+NPHI  = df_sorted['NPHI'].values
+RHOB  = df_sorted['RHOB'].values
+
+depth_min = depth.min()
+depth_max = depth.max()
+
+# --- Warna zona untuk setiap titik ---
+zone_colors_per_depth = [WARNA_ZONA[z] for z in df_sorted['Zone']]
+
+# ---- TRACK 1: LITOLOGI / ZONA ----
+for zona in ZONA_ORDER:
+    top    = tg1_zone_markers[zona]['Top']
+    bottom = tg1_zone_markers[zona]['Bottom']
+    ax_lito.barh(y=(top+bottom)/2, width=1,
+                 height=(bottom-top), left=0,
+                 color=WARNA_ZONA[zona], alpha=0.85, edgecolor='white', linewidth=0.5)
+    ax_lito.text(0.5, (top+bottom)/2, zona,
+                 ha='center', va='center', fontsize=9,
+                 fontweight='bold', color='white',
+                 transform=ax_lito.get_yaxis_transform())
+ax_lito.set_xlim(0, 1)
+ax_lito.set_ylim(depth_max + 5, depth_min - 5)
+ax_lito.set_xticks([])
+ax_lito.set_ylabel('Kedalaman (m)', fontsize=10, fontweight='bold')
+ax_lito.set_title('Zona\nLitologi', fontsize=9, fontweight='bold', pad=6)
+ax_lito.yaxis.set_major_locator(ticker.MultipleLocator(50))
+ax_lito.grid(True, axis='y', linestyle='--', alpha=0.4, color='gray')
+
+# ---- TRACK 2: GR (Gamma Ray) ----
+ax_gr.plot(GR, depth, color='green', linewidth=0.8, label='GR')
+ax_gr.fill_betweenx(depth, GR, 0, alpha=0.25, color='green')
+ax_gr.set_xlim(0, 200)
+ax_gr.set_ylim(depth_max + 5, depth_min - 5)
+ax_gr.set_xlabel('API', fontsize=8)
+ax_gr.set_title('GR\n(Gamma Ray)', fontsize=9, fontweight='bold', pad=6)
+ax_gr.set_yticklabels([])
+ax_gr.xaxis.set_major_locator(ticker.MultipleLocator(50))
+ax_gr.grid(True, linestyle='--', alpha=0.35, color='gray')
+ax_gr.tick_params(axis='x', labelsize=7)
+# Tambah zona boundary
+for zona in ZONA_ORDER:
+    top    = tg1_zone_markers[zona]['Top']
+    bottom = tg1_zone_markers[zona]['Bottom']
+    ax_gr.axhline(top,    color=WARNA_ZONA[zona], linewidth=1.2, linestyle='-', alpha=0.8)
+    ax_gr.axhline(bottom, color=WARNA_ZONA[zona], linewidth=1.2, linestyle='-', alpha=0.8)
+
+# ---- TRACK 3: ILD (Resistivity) - skala log ----
+ax_ild.semilogx(ILD, depth, color='red', linewidth=0.8)
+ax_ild.set_xlim(0.1, 10000)
+ax_ild.set_ylim(depth_max + 5, depth_min - 5)
+ax_ild.set_xlabel('ohm.m', fontsize=8)
+ax_ild.set_title('ILD\n(Resistivity)', fontsize=9, fontweight='bold', pad=6)
+ax_ild.set_yticklabels([])
+ax_ild.grid(True, which='both', linestyle='--', alpha=0.35, color='gray')
+ax_ild.tick_params(axis='x', labelsize=7)
+for zona in ZONA_ORDER:
+    ax_ild.axhline(tg1_zone_markers[zona]['Top'],    color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+    ax_ild.axhline(tg1_zone_markers[zona]['Bottom'], color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+
+# ---- TRACK 4: NPHI & RHOB (overlay) ----
+ax_nphi = ax_poro
+ax_rhob = ax_poro.twiny()
+
+ax_nphi.plot(NPHI, depth, color='blue',  linewidth=0.8, label='NPHI')
+ax_rhob.plot(RHOB, depth, color='brown', linewidth=0.8, label='RHOB', linestyle='--')
+
+ax_nphi.set_xlim(0.6, -0.1)   # NPHI terbalik (konvensi well log)
+ax_rhob.set_xlim(1.65, 2.85)
+ax_nphi.set_ylim(depth_max + 5, depth_min - 5)
+ax_rhob.set_ylim(depth_max + 5, depth_min - 5)
+
+ax_nphi.set_xlabel('NPHI (v/v)', fontsize=7, color='blue')
+ax_rhob.set_xlabel('RHOB (g/cc)', fontsize=7, color='brown')
+ax_poro.set_title('NPHI & RHOB\n(Porositas)', fontsize=9, fontweight='bold', pad=6)
+ax_poro.set_yticklabels([])
+ax_nphi.tick_params(axis='x', labelsize=6, colors='blue')
+ax_rhob.tick_params(axis='x', labelsize=6, colors='brown')
+ax_nphi.grid(True, linestyle='--', alpha=0.35, color='gray')
+for zona in ZONA_ORDER:
+    ax_nphi.axhline(tg1_zone_markers[zona]['Top'],    color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+    ax_nphi.axhline(tg1_zone_markers[zona]['Bottom'], color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+
+# ---- TRACK 5: SEMUA VSH ----
+vsh_cols   = ['Vsh_Linear','Vsh_Larionov_Old','Vsh_Larionov_Tert','Vsh_Steiber','Vsh_Clavier']
+vsh_labels = ['Linear','Lar. Old','Lar. Tert','Steiber','Clavier']
+vsh_clrs   = ['#1565C0','#2E7D32','#6A1B9A','#E65100','#B71C1C']
+vsh_lw     = [1.5, 1.0, 1.0, 1.0, 1.0]
+vsh_ls     = ['-',  '--', ':', '-.', (0,(3,1,1,1))]
+
+for col, lbl, clr, lw, ls in zip(vsh_cols, vsh_labels, vsh_clrs, vsh_lw, vsh_ls):
+    ax_vsh.plot(df_sorted[col], depth, color=clr, linewidth=lw,
+                linestyle=ls, label=lbl, alpha=0.9)
+
+ax_vsh.axvline(0.5, color='black', linewidth=1.0, linestyle='--', alpha=0.6, label='Vsh=0.5')
+ax_vsh.set_xlim(-0.05, 1.05)
+ax_vsh.set_ylim(depth_max + 5, depth_min - 5)
+ax_vsh.set_xlabel('Vsh', fontsize=8)
+ax_vsh.set_title('Volume Shale\n(5 Metode)', fontsize=9, fontweight='bold', pad=6)
+ax_vsh.set_yticklabels([])
+ax_vsh.grid(True, linestyle='--', alpha=0.35, color='gray')
+ax_vsh.tick_params(axis='x', labelsize=7)
+ax_vsh.legend(fontsize=6.5, loc='lower right', framealpha=0.85,
+              bbox_to_anchor=(1.0, 0.0), ncol=1)
+for zona in ZONA_ORDER:
+    ax_vsh.axhline(tg1_zone_markers[zona]['Top'],    color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+    ax_vsh.axhline(tg1_zone_markers[zona]['Bottom'], color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+
+# ---- TRACK 6: VSH LINEAR FILL (bersih vs shale) ----
+vsh_lin = df_sorted['Vsh_Linear'].values
+ax_vshb.fill_betweenx(depth, 0,       vsh_lin, color='saddlebrown', alpha=0.6, label='Shale')
+ax_vshb.fill_betweenx(depth, vsh_lin, 1,       color='gold',        alpha=0.6, label='Sand')
+ax_vshb.plot(vsh_lin, depth, color='black', linewidth=0.7)
+ax_vshb.axvline(0.5, color='red', linewidth=1.0, linestyle='--', alpha=0.8)
+ax_vshb.set_xlim(-0.05, 1.05)
+ax_vshb.set_ylim(depth_max + 5, depth_min - 5)
+ax_vshb.set_xlabel('Vsh Linear', fontsize=8)
+ax_vshb.set_title('Vsh Linear\n(Sand vs Shale)', fontsize=9, fontweight='bold', pad=6)
+ax_vshb.set_yticklabels([])
+ax_vshb.grid(True, linestyle='--', alpha=0.35, color='gray')
+ax_vshb.tick_params(axis='x', labelsize=7)
+ax_vshb.legend(fontsize=7, loc='lower right', framealpha=0.85)
+for zona in ZONA_ORDER:
+    ax_vshb.axhline(tg1_zone_markers[zona]['Top'],    color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+    ax_vshb.axhline(tg1_zone_markers[zona]['Bottom'], color=WARNA_ZONA[zona], linewidth=1.2, alpha=0.8)
+
+# ---- JUDUL UTAMA ----
+fig.suptitle('ANALISIS WELL LOG - SUMUR TG-1\nPerhitungan Volume Shale (Vsh)',
+             fontsize=14, fontweight='bold', y=0.97)
+
+# ---- LEGENDA ZONA ----
+from matplotlib.patches import Patch
+legend_patches = [Patch(color=WARNA_ZONA[z], label=z) for z in ZONA_ORDER]
+fig.legend(handles=legend_patches, loc='lower center', ncol=5,
+           fontsize=9, title='Zona', title_fontsize=9,
+           bbox_to_anchor=(0.5, 0.00), framealpha=0.9)
+
+plt.savefig('well_log_display_TG1.png', dpi=200, bbox_inches='tight',
+            facecolor='white')
+plt.show()
+print("\n✅ Grafik well log tersimpan: well_log_display_TG1.png")
+
+# ============================================================
+# BAGIAN 8: GRAFIK RATA-RATA Vsh PER ZONA (BAR CHART)
+# ============================================================
+fig2, ax = plt.subplots(figsize=(12, 5))
+
+x          = np.arange(len(ZONA_ORDER))
+bar_w      = 0.15
+methods    = ['Vsh_Linear','Vsh_Larionov_Old','Vsh_Larionov_Tert','Vsh_Steiber','Vsh_Clavier']
+meth_names = ['Linear','Larionov Old','Larionov Tert','Steiber','Clavier']
+meth_clrs  = ['#1565C0','#2E7D32','#6A1B9A','#E65100','#B71C1C']
+
+for i, (m, nm, clr) in enumerate(zip(methods, meth_names, meth_clrs)):
+    avgs = [df[df['Zone']==z][m].mean() for z in ZONA_ORDER]
+    bars = ax.bar(x + i*bar_w, avgs, bar_w, label=nm, color=clr, alpha=0.85,
+                  edgecolor='white', linewidth=0.5)
+    for b, v in zip(bars, avgs):
+        ax.text(b.get_x() + b.get_width()/2, b.get_height()+0.008,
+                f'{v:.3f}', ha='center', va='bottom', fontsize=6, rotation=90)
+
+ax.axhline(0.5, color='red', linestyle='--', linewidth=1.2, alpha=0.7, label='Batas Vsh=0.5')
+ax.set_xticks(x + bar_w*2)
+ax.set_xticklabels(ZONA_ORDER, fontsize=11)
+ax.set_ylabel('Rata-rata Vsh', fontsize=11)
+ax.set_xlabel('Zona', fontsize=11)
+ax.set_title('Rata-rata Volume Shale (Vsh) per Zona - Sumur TG-1',
+             fontsize=12, fontweight='bold')
+ax.set_ylim(0, 1.0)
+ax.legend(fontsize=9)
+ax.grid(True, axis='y', alpha=0.35, linestyle='--')
+plt.tight_layout()
+plt.savefig('rata2_vsh_per_zona.png', dpi=200, bbox_inches='tight', facecolor='white')
+plt.show()
+print("✅ Grafik rata-rata Vsh tersimpan: rata2_vsh_per_zona.png")
+
+# ============================================================
+# BAGIAN 9: ZONA MARKER TG-1 & TG-2
+# ============================================================
+fig3, axes3 = plt.subplots(1, 2, figsize=(7, 10))
+for ax3, (sumur, markers) in zip(axes3, [('TG-1', tg1_zone_markers), ('TG-2', tg2_zone_markers)]):
+    for zona in ZONA_ORDER:
+        top    = markers[zona]['Top']
+        bottom = markers[zona]['Bottom']
+        tebal  = bottom - top
+        ax3.bar(0, tebal, bottom=top, width=0.8, color=WARNA_ZONA[zona],
+                edgecolor='white', linewidth=1.5, alpha=0.85)
+        ax3.text(0, top + tebal/2,
+                 f'{zona}\n{top:.0f}–{bottom:.0f} m\n({tebal:.0f} m)',
+                 ha='center', va='center', fontsize=8.5,
+                 fontweight='bold', color='white')
+    ax3.invert_yaxis()
+    ax3.set_title(f'Sumur {sumur}', fontsize=12, fontweight='bold')
+    ax3.set_ylabel('Kedalaman (m)', fontsize=10)
+    ax3.set_xticks([])
+    ax3.grid(True, axis='y', alpha=0.3, linestyle='--')
+
+legend_p = [Patch(color=WARNA_ZONA[z], label=z) for z in ZONA_ORDER]
+fig3.legend(handles=legend_p, loc='lower center', ncol=5, fontsize=9,
+            title='Zona', bbox_to_anchor=(0.5, -0.02))
+fig3.suptitle('Zona Marker Stratigrafi\nTG-1 dan TG-2', fontsize=13, fontweight='bold')
+plt.tight_layout()
+plt.savefig('zona_marker_TG1_TG2.png', dpi=200, bbox_inches='tight', facecolor='white')
+plt.show()
+print("✅ Grafik zona marker tersimpan: zona_marker_TG1_TG2.png")
+
+print("\n" + "="*60)
+print("  SEMUA ANALISIS SELESAI!")
+print("  File yang dihasilkan:")
+print("    1. well_log_display_TG1.png")
+print("    2. rata2_vsh_per_zona.png")
+print("    3. zona_marker_TG1_TG2.png")
+print("="*60)
